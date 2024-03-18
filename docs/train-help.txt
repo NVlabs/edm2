@@ -1,0 +1,39 @@
+Usage: train_edm2.py [OPTIONS]
+
+  Train diffusion models according to the EDM2 recipe from the paper
+  "Analyzing and Improving the Training Dynamics of Diffusion Models".
+
+  Examples:
+
+  # Train XS-sized model for ImageNet-512 using 8 GPUs
+  torchrun --standalone --nproc_per_node=8 train_edm2.py \
+      --outdir=training-runs/00000-edm2-img512-xs \
+      --data=datasets/img512-sd.zip \
+      --preset=edm2-img512-xs \
+      --batch-gpu=32
+
+  # To resume training, run the same command again.
+
+Options:
+  --outdir DIR       Where to save the results  [required]
+  --data ZIP|DIR     Path to the dataset  [required]
+  --cond BOOL        Train class-conditional model  [default: True]
+  --preset STR       Configuration preset  [default: edm2-img512-s]
+  --duration NIMG    Training duration
+  --batch NIMG       Total batch size
+  --channels INT     Channel multiplier  [x>=64]
+  --dropout FLOAT    Dropout probability  [0<=x<=1]
+  --P_mean FLOAT     Noise level mean
+  --P_std FLOAT      Noise level standard deviation  [x>0]
+  --lr FLOAT         Learning rate max. (alpha_ref)  [x>0]
+  --decay BATCHES    Learning rate decay (t_ref)  [x>=0]
+  --batch-gpu NIMG   Limit batch size per GPU  [default: 0]
+  --fp16 BOOL        Enable mixed-precision training  [default: True]
+  --ls FLOAT         Loss scaling  [default: 1; x>0]
+  --bench BOOL       Enable cuDNN benchmarking  [default: True]
+  --status NIMG      Interval of status prints  [default: 128Ki]
+  --snapshot NIMG    Interval of network snapshots  [default: 8Mi]
+  --checkpoint NIMG  Interval of training checkpoints  [default: 128Mi]
+  --seed INT         Random seed  [default: 0]
+  -n, --dry-run      Print training options and exit
+  --help             Show this message and exit.

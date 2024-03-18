@@ -1,0 +1,33 @@
+Usage: reconstruct_phema.py [OPTIONS]
+
+  Perform post-hoc EMA reconstruction.
+
+  Examples:
+
+  # Download raw snapshots for the pre-trained edm2-img512-xs model
+  rclone copy --progress --http-url https://nvlabs-fi-cdn.nvidia.com/edm2 \
+      :http:raw-snapshots/edm2-img512-xs/ raw-snapshots/edm2-img512-xs/
+
+  # Reconstruct a new EMA profile with std=0.150
+  python reconstruct_phema.py --indir=raw-snapshots/edm2-img512-xs \
+      --outdir=out --outstd=0.150
+
+  # Reconstruct a set of 31 EMA profiles, streaming over the input data 4 times
+  python reconstruct_phema.py --indir=raw-snapshots/edm2-img512-xs \
+      --outdir=out --outstd=0.010,0.015,...,0.250 --batch=8
+
+  # Perform reconstruction for the latest snapshot of a given training run
+  python reconstruct_phema.py --indir=training-runs/00000-edm2-img512-xs \
+      --outdir=out --outstd=0.150
+
+Options:
+  --indir DIR      Directory containing the input pickles  [required]
+  --inprefix STR   Filter inputs based on filename prefix
+  --instd LIST     Filter inputs based on standard deviations
+  --outdir DIR     Where to save the reconstructed network pickles  [required]
+  --outprefix STR  Output filename prefix  [default: phema]
+  --outstd LIST    List of desired relative standard deviations  [required]
+  --outkimg KIMG   Training time of the snapshot to reconstruct  [x>=1]
+  --skip           Skip output files that already exist
+  --batch INT      Maximum simultaneous reconstructions  [default: 8; x>=1]
+  --help           Show this message and exit.
