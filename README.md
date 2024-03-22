@@ -1,4 +1,4 @@
-## Analyzing and Improving the Training Dynamics of Diffusion Models (EDM2)<br><sub>Official PyTorch implementation</sub>
+## Analyzing and Improving the Training Dynamics of Diffusion Models (EDM2)<br><sub>Official PyTorch implementation of the CVPR 2024 paper</sub>
 
 ![Teaser image](./docs/teaser-2048x512.jpg)
 
@@ -215,13 +215,12 @@ All material, including source code and pre-trained models, is licensed under th
 ## Citation
 
 ```
-@article{Karras2024edm2,
-  title   = {Analyzing and Improving the Training Dynamics of Diffusion Models},
-  author  = {Tero Karras and Miika Aittala and Jaakko Lehtinen and
-             Janne Hellsten and Timo Aila and Samuli Laine},
-  journal = {CoRR},
-  volume  = {abs/2312.02696},
-  year    = {2024},
+@inproceedings{Karras2024edm2,
+  title     = {Analyzing and Improving the Training Dynamics of Diffusion Models},
+  author    = {Tero Karras and Miika Aittala and Jaakko Lehtinen and
+               Janne Hellsten and Timo Aila and Samuli Laine},
+  booktitle = {Proc. CVPR},
+  year      = {2024},
 }
 ```
 
