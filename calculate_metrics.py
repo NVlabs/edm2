@@ -56,7 +56,7 @@ class DINOv2Detector(Detector):
         import warnings
         warnings.filterwarnings('ignore', 'xFormers is not available')
         torch.hub.set_dir(dnnlib.make_cache_dir_path('torch_hub'))
-        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14', trust_repo=True, verbose=False, skip_validation=True)
+        self.model = torch.hub.load('facebookresearch/dinov2:main', 'dinov2_vitl14', trust_repo=True, verbose=False, skip_validation=True)
         self.model.eval().requires_grad_(False)
 
     def __call__(self, x):
