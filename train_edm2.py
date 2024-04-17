@@ -166,6 +166,10 @@ def parse_nimg(s):
 @click.option('--seed',             help='Random seed', metavar='INT',                          type=int, default=0, show_default=True)
 @click.option('-n', '--dry-run',    help='Print training options and exit',                     is_flag=True)
 
+# Patch Diffusion options
+@click.option('--real_p',        help='Full size image ratio', metavar='INT',                       type=click.FloatRange(min=0, max=1), default=0.5, show_default=True)
+@click.option('--progressive',      help='Training on latent embeddings', metavar='BOOL',           type=bool, default=False, show_default=True)
+
 def cmdline(outdir, dry_run, **opts):
     """Train diffusion models according to the EDM2 recipe from the paper
     "Analyzing and Improving the Training Dynamics of Diffusion Models".
