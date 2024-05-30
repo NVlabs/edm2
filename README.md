@@ -48,7 +48,7 @@ We provide pre-trained models for our proposed EDM2 configuration (config G) for
 
 ```.bash
 # Generate a couple of images and save them as out/*.png
-python generate_images.py --preset=edm2-img512-xxl-guid-dino --outdir=out
+python generate_images.py --preset=edm2-img512-s-guid-dino --outdir=out
 ```
 
 The above command automatically downloads the necessary models and caches them under `$HOME/.cache/dnnlib`, which can be overridden by setting the `DNNLIB_CACHE_DIR` environment variable. The `--preset=edm2-img512-xxl-guid-dino` option indicates that we will be using the XXL-sized EDM2 model, trained with ImageNet-512 and sampled using guidance, with EMA length and guidance strength chosen to minimize FD<sub>DINOv2</sub>. The following presets are supported:

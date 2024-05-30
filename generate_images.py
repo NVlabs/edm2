@@ -9,6 +9,7 @@
 
 import os
 import re
+import warnings
 import click
 import tqdm
 import pickle
@@ -17,6 +18,8 @@ import torch
 import PIL.Image
 import dnnlib
 from torch_utils import distributed as dist
+
+warnings.filterwarnings('ignore', '`resume_download` is deprecated')
 
 #----------------------------------------------------------------------------
 # Configuration presets.
@@ -129,18 +132,19 @@ class StackedRandomGenerator:
 # dnnlib.EasyDict(images, labels, noise, batch_idx, num_batches, indices, seeds)
 
 def generate_images(
-    net,                                    # Main network. Path, URL, or torch.nn.Module.
-    gnet            = None,                 # Reference network for guidance. None = same as main network.
-    encoder         = None,                 # Instance of training.encoders.Encoder. None = load from network pickle.
-    outdir          = None,                 # Where to save the output images. None = do not save.
-    subdirs         = False,                # Create subdirectory for every 1000 seeds?
-    seeds           = range(16, 24),        # List of random seeds.
-    class_idx       = None,                 # Class label. None = select randomly.
-    max_batch_size  = 32,                   # Maximum batch size.
-    verbose         = True,                 # Enable status prints?
-    device          = torch.device('cuda'), # Which compute device to use.
-    sampler_fn      = edm_sampler,          # Which sampler function to use.
-    **sampler_kwargs,                       # Additional arguments for the sampler function.
+    net,                                        # Main network. Path, URL, or torch.nn.Module.
+    gnet                = None,                 # Reference network for guidance. None = same as main network.
+    encoder             = None,                 # Instance of training.encoders.Encoder. None = load from network pickle.
+    outdir              = None,                 # Where to save the output images. None = do not save.
+    subdirs             = False,                # Create subdirectory for every 1000 seeds?
+    seeds               = range(16, 24),        # List of random seeds.
+    class_idx           = None,                 # Class label. None = select randomly.
+    max_batch_size      = 32,                   # Maximum batch size for the diffusion model.
+    encoder_batch_size  = 4,                    # Maximum batch size for the encoder. None = default.
+    verbose             = True,                 # Enable status prints?
+    device              = torch.device('cuda'), # Which compute device to use.
+    sampler_fn          = edm_sampler,          # Which sampler function to use.
+    **sampler_kwargs,                           # Additional arguments for the sampler function.
 ):
     # Rank 0 goes first.
     if dist.get_rank() != 0:
@@ -173,6 +177,8 @@ def generate_images(
     if verbose:
         dist.print0(f'Setting up {type(encoder).__name__}...')
     encoder.init(device)
+    if encoder_batch_size is not None and hasattr(encoder, 'batch_size'):
+        encoder.batch_size = encoder_batch_size
 
     # Other ranks follow.
     if dist.get_rank() == 0:
@@ -250,7 +256,7 @@ def parse_int_list(s):
 @click.option('--gnet',                     help='Reference network for guidance', metavar='PATH|URL',              type=str, default=None)
 @click.option('--outdir',                   help='Where to save the output images', metavar='DIR',                  type=str, required=True)
 @click.option('--subdirs',                  help='Create subdirectory for every 1000 seeds',                        is_flag=True)
-@click.option('--seeds',                    help='List of random seeds (e.g. 1,2,5-10)', metavar='LIST',            type=parse_int_list, default='16-23', show_default=True)
+@click.option('--seeds',                    help='List of random seeds (e.g. 1,2,5-10)', metavar='LIST',            type=parse_int_list, default='16-19', show_default=True)
 @click.option('--class', 'class_idx',       help='Class label  [default: random]', metavar='INT',                   type=click.IntRange(min=0), default=None)
 @click.option('--batch', 'max_batch_size',  help='Maximum batch size', metavar='INT',                               type=click.IntRange(min=1), default=32, show_default=True)
 
@@ -271,7 +277,7 @@ def cmdline(preset, **opts):
 
     \b
     # Generate a couple of images and save them as out/*.png
-    python generate_images.py --preset=edm2-img512-xxl-guid-dino --outdir=out
+    python generate_images.py --preset=edm2-img512-s-guid-dino --outdir=out
 
     \b
     # Generate 50000 images using 8 GPUs and save them as out/*/*.png

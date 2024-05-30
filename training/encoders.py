@@ -8,10 +8,14 @@
 """Converting between pixel and latent representations of image data."""
 
 import os
+import warnings
 import numpy as np
 import torch
 from torch_utils import persistence
 from torch_utils import misc
+
+warnings.filterwarnings('ignore', 'torch.utils._pytree._register_pytree_node is deprecated.')
+warnings.filterwarnings('ignore', '`resume_download` is deprecated')
 
 #----------------------------------------------------------------------------
 # Abstract base class for encoders/decoders that convert back and forth
@@ -135,8 +139,6 @@ def load_stability_vae(vae_name='stabilityai/sd-vae-ft-mse', device=torch.device
     os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
     os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
     os.environ['HF_HOME'] = cache_dir
-    import warnings
-    warnings.filterwarnings('ignore', 'torch.utils._pytree._register_pytree_node is deprecated.')
 
     import diffusers # pip install diffusers # pyright: ignore [reportMissingImports]
     try:
