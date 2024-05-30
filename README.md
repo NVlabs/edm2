@@ -31,7 +31,7 @@ docker build --tag edm2:latest .
 docker run --gpus all -it --rm --user $(id -u):$(id -g) \
     -v `pwd`:/scratch --workdir /scratch -e HOME=/scratch \
     edm2:latest \
-    python generate_images.py --preset=edm2-img512-xxl-guid-dino --outdir=out
+    python generate_images.py --preset=edm2-img512-s-guid-dino --outdir=out
 ```
 
 If you hit an error, please ensure you have correctly installed the [NVIDIA container runtime](https://docs.docker.com/config/containers/resource_constraints/#gpu). See [NVIDIA PyTorch container release notes](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-24-02.html#rel-24-02) for driver compatibility details.
@@ -51,7 +51,7 @@ We provide pre-trained models for our proposed EDM2 configuration (config G) for
 python generate_images.py --preset=edm2-img512-s-guid-dino --outdir=out
 ```
 
-The above command automatically downloads the necessary models and caches them under `$HOME/.cache/dnnlib`, which can be overridden by setting the `DNNLIB_CACHE_DIR` environment variable. The `--preset=edm2-img512-xxl-guid-dino` option indicates that we will be using the XXL-sized EDM2 model, trained with ImageNet-512 and sampled using guidance, with EMA length and guidance strength chosen to minimize FD<sub>DINOv2</sub>. The following presets are supported:
+The above command automatically downloads the necessary models and caches them under `$HOME/.cache/dnnlib`, which can be overridden by setting the `DNNLIB_CACHE_DIR` environment variable. The `--preset=edm2-img512-s-guid-dino` option indicates that we will be using the S-sized EDM2 model, trained with ImageNet-512 and sampled using guidance, with EMA length and guidance strength chosen to minimize FD<sub>DINOv2</sub>. The following presets are supported:
 
 ```
 edm2-img512-{xs|s|m|l|xl|xxl}-fid        # Table 2, no CFG
@@ -89,7 +89,7 @@ To calculate FID and FD<sub>DINOv2</sub>, we first need to generate 50,000 rando
 ```.bash
 # Generate 50000 images using 8 GPUs and save them as out/*/*.png
 torchrun --standalone --nproc_per_node=8 generate_images.py \
-    --preset=edm2-img512-xxl-guid-fid --outdir=out --subdirs --seeds=0-49999
+    --preset=edm2-img512-s-guid-fid --outdir=out --subdirs --seeds=0-49999
 ```
 
 Alternatively, `generate_images.py` can be launched as a multi-GPU or multi-node job in a compute cluster. This should work out-of-the-box as long as the cluster environment spawns a separate process for each GPU and populates the necessary environment variables. For further details, please refer to the [`torchrun`](https://pytorch.org/docs/stable/elastic/run.html) documetation.
