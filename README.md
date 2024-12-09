@@ -1,13 +1,14 @@
-## Analyzing and Improving the Training Dynamics of Diffusion Models (EDM2)<br><sub>Official PyTorch implementation of the CVPR 2024 paper</sub>
+## EDM2 and Autoguidance &mdash; Official PyTorch implementation
 
 ![Teaser image](./docs/teaser-2048x512.jpg)
 
-**Analyzing and Improving the Training Dynamics of Diffusion Models**<br>
+**Analyzing and Improving the Training Dynamics of Diffusion Models** (CVPR 2024 oral)<br>
 Tero Karras, Miika Aittala, Jaakko Lehtinen, Janne Hellsten, Timo Aila, Samuli Laine<br>
 https://arxiv.org/abs/2312.02696<br>
 
-Abstract: *Diffusion models currently dominate the field of data-driven image synthesis with their unparalleled scaling to large datasets. In this paper, we identify and rectify several causes for uneven and ineffective training in the popular ADM diffusion model architecture, without altering its high-level structure. Observing uncontrolled magnitude changes and imbalances in both the network activations and weights over the course of training, we redesign the network layers to preserve activation, weight, and update magnitudes on expectation. We find that systematic application of this philosophy eliminates the observed drifts and imbalances, resulting in considerably better networks at equal computational complexity. Our modifications improve the previous record FID of 2.41 in ImageNet-512 synthesis to 1.81, achieved using fast deterministic sampling.<br>
-As an independent contribution, we present a method for setting the exponential moving average (EMA) parameters post-hoc, i.e., after completing the training run. This allows precise tuning of EMA length without the cost of performing several training runs, and reveals its surprising interactions with network architecture, training time, and guidance.*
+**Guiding a Diffusion Model with a Bad Version of Itself** (NeurIPS 2024 oral)<br>
+Tero Karras, Miika Aittala, Tuomas Kynk&auml;&auml;nniemi, Jaakko Lehtinen, Timo Aila, Samuli Laine<br>
+https://arxiv.org/abs/2406.02507<br>
 
 For business inquiries, please visit our website and submit the form: [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/)
 
@@ -18,8 +19,6 @@ For business inquiries, please visit our website and submit the form: [NVIDIA Re
 * 64-bit Python 3.9 and PyTorch 2.1 (or later). See https://pytorch.org for PyTorch install instructions.
 * Other Python libraries: `pip install click Pillow psutil requests scipy tqdm diffusers==0.26.3 accelerate==0.27.2`
 * For downloading the raw snapshots needed for post-hoc EMA reconstruction, we recommend using [Rclone](https://rclone.org/install/).
-
-**Docker**
 
 For convenience, we provide a [Dockerfile](./Dockerfile) with the required dependencies. You can use it as follows:
 
@@ -54,11 +53,16 @@ python generate_images.py --preset=edm2-img512-s-guid-dino --outdir=out
 The above command automatically downloads the necessary models and caches them under `$HOME/.cache/dnnlib`, which can be overridden by setting the `DNNLIB_CACHE_DIR` environment variable. The `--preset=edm2-img512-s-guid-dino` option indicates that we will be using the S-sized EDM2 model, trained with ImageNet-512 and sampled using guidance, with EMA length and guidance strength chosen to minimize FD<sub>DINOv2</sub>. The following presets are supported:
 
 ```
-edm2-img512-{xs|s|m|l|xl|xxl}-fid        # Table 2, no CFG
-edm2-img512-{xs|s|m|l|xl|xxl}-guid-fid   # Table 2, w/CFG
-edm2-img512-{xs|s|m|l|xl|xxl}-dino       # Table 5, no CFG
-edm2-img512-{xs|s|m|l|xl|xxl}-guid-dino  # Table 5, w/CFG
-edm2-img64-{s|m|l|xl}-fid                # Table 3
+# EDM2 paper
+edm2-img512-{xs|s|m|l|xl|xxl}-fid              # Table 2, minimize fid
+edm2-img512-{xs|s|m|l|xl|xxl}-dino             # Table 5, minimize fd_dinov2
+edm2-img64-{s|m|l|xl}-fid                      # Table 3, minimize fid
+edm2-img512-{xs|s|m|l|xl|xxl}-guid-{fid|dino}  # Table 2, classifier-free guidance
+
+# Autoguidance paper
+edm2-img512-{s|xxl}-autog-{fid|dino}           # Table 1, conditional ImageNet-512
+edm2-img512-s-uncond-autog-{fid|dino}          # Table 1, unconditional ImageNet-512
+edm2-img64-s-autog-{fid|dino}                  # Table 1, conditional ImageNet-64
 ```
 
 Each of these maps to a specific set of options that point to the models in [https://nvlabs-fi-cdn.nvidia.com/edm2/posthoc-reconstructions/](https://nvlabs-fi-cdn.nvidia.com/edm2/posthoc-reconstructions/). For example, `--preset=edm2-img512-xxl-guid-dino` is equivalent to:
@@ -122,7 +126,7 @@ We also provide the necessary APIs to do these kinds of operations programmatica
 
 The models in [https://nvlabs-fi-cdn.nvidia.com/edm2/posthoc-reconstructions/](https://nvlabs-fi-cdn.nvidia.com/edm2/posthoc-reconstructions/) correspond to specific choices for the EMA length. In addition, we also provide the raw snapshots for each training run in [https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/](https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/) that can be used to reconstruct arbitrary EMA profiles.
 
-Note that the raw snapshots can take up a considerable amount of disk space. In the paper, we saved snapshots every 8Mi (= 8 [mebi](https://en.wikipedia.org/wiki/Binary_prefix#mebi) = 8&times;2<sup>20</sup>) training images, corresponding to 118&ndash;635 GB of data per training run depending on model size. In [https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/](https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/), we provide the snapshots at 64Mi intervals instead, corresponding to 15&ndash;79 GB per training run. We have done extensive testing to verify that this is sufficient for accurate reconstruction.
+Note that the raw snapshots can take up a considerable amount of disk space. In the paper, we saved snapshots every 8Mi (= 8 [mebi](https://en.wikipedia.org/wiki/Binary_prefix#mebi) = 8&times;2<sup>20</sup>) training images, corresponding to 118&ndash;635 GB of data per training run depending on model size. In [https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/](https://nvlabs-fi-cdn.nvidia.com/edm2/raw-snapshots/), we provide the snapshots at 32Mi intervals instead, corresponding to 30&ndash;159 GB per training run. We have done extensive testing to verify that this is sufficient for accurate reconstruction.
 
 To reconstruct new EMA profiles, the first step is to download the raw snapshots corresponding to a given training run. We recommend using [Rclone](https://rclone.org/install/) for this:
 
@@ -132,7 +136,7 @@ rclone copy --progress --http-url https://nvlabs-fi-cdn.nvidia.com/edm2 \
     :http:raw-snapshots/edm2-img512-xs/ raw-snapshots/edm2-img512-xs/
 ```
 
-The above command downloads 64 network pickles, 238 MB each, yielding 14.8 GB in total. Once the download is complete, new EMA profiles can be reconstructed using `reconstruct_phema.py`:
+The above command downloads 128 network pickles, 238 MB each, yielding 29.8 GB in total. Once the download is complete, new EMA profiles can be reconstructed using `reconstruct_phema.py`:
 
 ```.bash
 # Reconstruct a new EMA profile with std=0.150
@@ -206,6 +210,19 @@ When the training script starts, it will automatically look for the highest-numb
 
 See [`python train_edm2.py --help`](./docs/train-help.txt) for the full list of options.
 
+## 2D toy example
+
+The 2D toy example used in the autoguidance paper can be reproduced with `toy_example.py`:
+
+```.bash
+# Visualize sampling distributions using autoguidance.
+python toy_example.py plot
+```
+
+See [`python toy_example.py --help`](./docs/toy-help.txt) for the full list of options.
+
+![2D toy example](./docs/toy-example.jpg)
+
 ## License
 
 Copyright &copy; 2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -222,6 +239,14 @@ All material, including source code and pre-trained models, is licensed under th
   booktitle = {Proc. CVPR},
   year      = {2024},
 }
+
+@inproceedings{Karras2024autoguidance,
+  title     = {Guiding a Diffusion Model with a Bad Version of Itself},
+  author    = {Tero Karras and Miika Aittala and Tuomas Kynk\"a\"anniemi and
+               Jaakko Lehtinen and Timo Aila and Samuli Laine},
+  booktitle = {Proc. NeurIPS},
+  year      = {2024},
+}
 ```
 
 ## Development
@@ -230,4 +255,4 @@ This is a research reference implementation and is treated as a one-time code dr
 
 ## Acknowledgments
 
-We thank Eric Chan, Qinsheng Zhang, Erik H&auml;rk&ouml;nen, Tuomas Kynk&auml;&auml;nniemi, Arash Vahdat, Ming-Yu Liu, and David Luebke for discussions and comments, and Tero Kuosmanen and Samuel Klenberg for maintaining our compute infrastructure.
+We thank Eric Chan, Qinsheng Zhang, Erik H&auml;rk&ouml;nen, Arash Vahdat, Ming-Yu Liu, David Luebke, and Alex Keller for discussions and comments, and Tero Kuosmanen and Samuel Klenberg for maintaining our compute infrastructure.

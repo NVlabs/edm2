@@ -10,6 +10,7 @@
 import os
 import re
 import copy
+import warnings
 import click
 import tqdm
 import pickle
@@ -17,6 +18,8 @@ import numpy as np
 import torch
 import dnnlib
 import training.phema
+
+warnings.filterwarnings('ignore', 'You are using `torch.load` with `weights_only=False`')
 
 #----------------------------------------------------------------------------
 # Construct the full path of a network pickle.

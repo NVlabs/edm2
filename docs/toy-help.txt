@@ -1,0 +1,39 @@
+Usage: toy_example.py [OPTIONS] COMMAND [ARGS]...
+
+  2D toy example from the paper "Guiding a Diffusion Model with a Bad Version
+  of Itself".
+
+  Examples:
+
+  # Visualize sampling distributions using autoguidance.
+  python toy_example.py plot
+
+  # Same, but save the plot as PNG instead of displaying it.
+  python toy_example.py plot --save=out.png
+
+  # Same, but specify the models explicitly.
+  python toy_example.py plot \
+      --net=https://nvlabs-fi-cdn.nvidia.com/edm2/toy-example/clsA-layers04-dim64/iter4096.pkl \
+      --gnet=https://nvlabs-fi-cdn.nvidia.com/edm2/toy-example/clsA-layers04-dim32/iter0512.pkl \
+      --guidance=3
+
+  # Same, but using classifier-free guidance.
+  python toy_example.py plot \
+      --net=https://nvlabs-fi-cdn.nvidia.com/edm2/toy-example/clsA-layers04-dim64/iter4096.pkl \
+      --gnet=https://nvlabs-fi-cdn.nvidia.com/edm2/toy-example/clsAB-layers04-dim32/iter0512.pkl \
+      --guidance=4
+
+  # Retrain the main model and visualize progress.
+  python toy_example.py train
+
+  # Retrain the main model and save snapshots.
+  python toy_example.py train \
+      --outdir=toy-example/clsA-layers04-dim64 \
+      --cls=A --layers=4 --dim=64 --viz=false
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  plot   Visualize sampling distributions with and without guidance.
+  train  Train a 2D toy model with the given parameters.

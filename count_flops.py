@@ -16,6 +16,8 @@ import numpy as np
 import torch
 import dnnlib
 
+warnings.filterwarnings('ignore', 'You are using `torch.load` with `weights_only=False`')
+
 #----------------------------------------------------------------------------
 
 @contextlib.contextmanager
