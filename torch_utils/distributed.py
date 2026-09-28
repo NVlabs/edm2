@@ -111,7 +111,8 @@ class CheckpointIO:
     def load(self, pt_path, verbose=True):
         if verbose:
             print0(f'Loading {pt_path} ... ', end='', flush=True)
-        data = torch.load(pt_path, map_location=torch.device('cpu'))
+        # Checkpoints contain arbitrary Python objects; PyTorch >= 2.6 defaults to weights_only=True.
+        data = torch.load(pt_path, map_location=torch.device('cpu'), weights_only=False)
         for name, obj in self._state_objs.items():
             if obj is None:
                 pass
@@ -123,7 +124,7 @@ class CheckpointIO:
             elif hasattr(obj, '__setstate__'):
                 obj.__setstate__(data[name])
             elif hasattr(obj, '__dict__'):
-                obj.__dict__.clear()
+                # Update rather than replace, keeping attributes missing from the checkpoint.
                 obj.__dict__.update(data[name])
             else:
                 raise ValueError(f'Invalid state object of type {type(obj).__name__}')

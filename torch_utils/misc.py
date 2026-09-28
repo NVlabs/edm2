@@ -195,6 +195,66 @@ def check_ddp_consistency(module, ignore_regex=None):
         assert (tensor == other).all(), fullname
 
 #----------------------------------------------------------------------------
+# Average gradients across ranks. Needed for the JVP-based losses (sCM, MS-sCD),
+# which run on the unwrapped module and therefore bypass DDP's all-reduce.
+# Missing grads are zero-filled so that all ranks reduce the same tensors.
+
+def allreduce_grads_mean(module, bucket_cap_mb=125):
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return
+    world_size = torch.distributed.get_world_size()
+    if world_size <= 1:
+        return
+    grads = []
+    for param in module.parameters():
+        if not param.requires_grad:
+            continue
+        if param.grad is None:
+            param.grad = torch.zeros_like(param)
+        grads.append(param.grad)
+    if not grads:
+        return
+
+    # Bucketed async all-reduce.
+    bucket_cap = int(bucket_cap_mb) * 1024 * 1024
+    pending = []
+
+    def _launch(bucket):
+        flat = torch._utils._flatten_dense_tensors(bucket)
+        handle = torch.distributed.all_reduce(flat, async_op=True)
+        pending.append((handle, flat, bucket))
+
+    bucket = []
+    bucket_bytes = 0
+    for g in grads:
+        bucket.append(g)
+        bucket_bytes += g.numel() * g.element_size()
+        if bucket_bytes >= bucket_cap:
+            _launch(bucket)
+            bucket = []
+            bucket_bytes = 0
+    if bucket:
+        _launch(bucket)
+
+    for handle, flat, bucket in pending:
+        handle.wait()
+        flat /= world_size
+        for g, synced in zip(bucket, torch._utils._unflatten_dense_tensors(flat, bucket)):
+            g.copy_(synced)
+
+#----------------------------------------------------------------------------
+# Broadcast rank-0 parameters and buffers to all ranks.
+
+def sync_params_and_optimizer_from_rank0(module):
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return
+    if torch.distributed.get_world_size() <= 1:
+        return
+    for _, param in named_params_and_buffers(module):
+        if param.is_floating_point() and param.is_cuda:
+            torch.distributed.broadcast(param.data, src=0)
+
+#----------------------------------------------------------------------------
 # Print summary table of module hierarchy.
 
 @torch.no_grad()

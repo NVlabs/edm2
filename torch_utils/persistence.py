@@ -171,9 +171,8 @@ def import_hook(hook):
     Example:
 
         @persistence.import_hook
-        def wreck_my_network(meta):
+        def patch_my_network(meta):
             if meta.class_name == 'MyNetwork':
-                print('MyNetwork is being imported. I will wreck it!')
                 meta.module_src = meta.module_src.replace("True", "False")
             return meta
     """

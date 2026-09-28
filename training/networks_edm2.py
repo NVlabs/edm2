@@ -4,14 +4,21 @@
 # Attribution-NonCommercial-ShareAlike 4.0 International License.
 # You should have received a copy of the license along with this
 # work. If not, see http://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# Modified: added inplace_norm_flag to MPConv.
 
 """Improved diffusion model architecture proposed in the paper
 "Analyzing and Improving the Training Dynamics of Diffusion Models"."""
 
 import numpy as np
 import torch
+from contextvars import ContextVar
 from torch_utils import persistence
 from torch_utils import misc
+
+# False suspends the in-place forced weight normalization in MPConv, so the
+# no-grad target pass of consistency distillation does not modify the weights.
+inplace_norm_flag = ContextVar('inplace_norm_flag', default=True)
 
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
@@ -98,7 +105,8 @@ class MPConv(torch.nn.Module):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
+                if inplace_norm_flag.get():
+                    self.weight.copy_(normalize(w)) # forced weight normalization
         w = normalize(w) # traditional weight normalization
         w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
         w = w.to(x.dtype)
@@ -122,6 +130,7 @@ class Block(torch.nn.Module):
         attention           = False,    # Include self-attention?
         channels_per_head   = 64,       # Number of channels per attention head.
         dropout             = 0,        # Dropout probability.
+        dout_resolutions    = None,     # Resolutions at which to apply dropout. None = all.
         res_balance         = 0.3,      # Balance between main branch (0) and residual branch (1).
         attn_balance        = 0.3,      # Balance between main branch (0) and self-attention (1).
         clip_act            = 256,      # Clip output activations. None = do not clip.
@@ -133,6 +142,7 @@ class Block(torch.nn.Module):
         self.resample_mode = resample_mode
         self.num_heads = out_channels // channels_per_head if attention else 0
         self.dropout = dropout
+        self.dout_resolutions = dout_resolutions
         self.res_balance = res_balance
         self.attn_balance = attn_balance
         self.clip_act = clip_act
@@ -156,7 +166,7 @@ class Block(torch.nn.Module):
         y = self.conv_res0(mp_silu(x))
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = mp_silu(y * c.unsqueeze(2).unsqueeze(3).to(y.dtype))
-        if self.training and self.dropout != 0:
+        if self.training and self.dropout != 0 and (self.dout_resolutions is None or y.shape[-1] in self.dout_resolutions):
             y = torch.nn.functional.dropout(y, p=self.dropout)
         y = self.conv_res1(y)
 

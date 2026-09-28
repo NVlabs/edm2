@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: "If you use this code or the released checkpoints, please cite the paper below."
+title: "edm2_sCM: Stable Continuous-Time Consistency Distillation"
+authors:
+  - family-names: Mathew
+    given-names: Vinay Saji
+    affiliation: "The Pennsylvania State University"
+  - family-names: Kumara
+    given-names: Soundar R.
+    affiliation: "The Pennsylvania State University"
+  - family-names: Kellogg
+    given-names: Gretta D.
+    affiliation: "The Pennsylvania State University"
+  - family-names: Lai
+    given-names: William KM
+    affiliation: "State University of New York at Buffalo"
+    email: wklai2@buffalo.edu
+repository-code: "https://github.com/EpiGenomicsCode/edm2_sCM"
+url: "https://huggingface.co/vinaymatt/edm2_sCM"
+license: CC-BY-NC-SA-4.0
+preferred-citation:
+  type: article
+  title: "Stable Continuous-Time Consistency Distillation: An Empirical Study with a Multistep Extension"
+  authors:
+    - family-names: Mathew
+      given-names: Vinay Saji
+    - family-names: Kumara
+      given-names: Soundar R.
+    - family-names: Kellogg
+      given-names: Gretta D.
+    - family-names: Lai
+      given-names: William KM
+  journal: "Transactions on Machine Learning Research"
+  year: 2026
+  url: "https://openreview.net/forum?id=di6ofoWEU8"
+references:
+  - type: software
+    title: "EDM2 and Autoguidance"
+    authors:
+      - name: "NVIDIA Corporation"
+    repository-code: "https://github.com/NVlabs/edm2"
+    license: CC-BY-NC-SA-4.0
+  - type: software
+    title: "Elucidating the Design Space of Diffusion-Based Generative Models (EDM)"
+    authors:
+      - name: "NVIDIA Corporation"
+    repository-code: "https://github.com/NVlabs/edm"
+    commit: 008a4e5316c8e3bfe61a62f874bddba254295afb
+    license: CC-BY-NC-SA-4.0

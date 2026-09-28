@@ -38,9 +38,19 @@ class Detector:
 class InceptionV3Detector(Detector):
     def __init__(self):
         super().__init__(feature_dim=2048)
-        url = 'https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/metrics/inception-2015-12-05.pkl'
-        with dnnlib.util.open_url(url, verbose=False) as f:
-            self.model = pickle.load(f)
+        # Use a local copy if available: $EDM_INCEPTION_PATH, then metrics/.
+        local_path = os.environ.get('EDM_INCEPTION_PATH', None)
+        if local_path is None:
+            repo_local = os.path.join(os.path.dirname(__file__), 'metrics', 'inception-2015-12-05.pkl')
+            if os.path.isfile(repo_local):
+                local_path = repo_local
+        if local_path is not None and os.path.isfile(local_path):
+            with open(local_path, 'rb') as f:
+                self.model = pickle.load(f)
+        else:
+            url = 'https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan3/versions/1/files/metrics/inception-2015-12-05.pkl'
+            with dnnlib.util.open_url(url, verbose=False) as f:
+                self.model = pickle.load(f)
 
     def __call__(self, x):
         return self.model.to(x.device)(x, return_features=True)
@@ -345,17 +355,41 @@ def calc(ref_path, metrics, **opts):
 @cmdline.command()
 @click.option('--net',                      help='Network pickle filename', metavar='PATH|URL',             type=str, required=True)
 @click.option('--ref', 'ref_path',          help='Dataset reference statistics ', metavar='PKL|NPZ|URL',    type=str, required=True)
-@click.option('--metrics',                  help='List of metrics to compute', metavar='LIST',              type=parse_metric_list, default='fid,fd_dinov2', show_default=True)
+@click.option('--metrics',                  help='List of metrics to compute', metavar='LIST',              type=parse_metric_list, default='fid', show_default=True)
 @click.option('--num', 'num_images',        help='Number of images to generate', metavar='INT',             type=click.IntRange(min=2), default=50000, show_default=True)
 @click.option('--seed',                     help='Random seed for the first image', metavar='INT',          type=int, default=0, show_default=True)
 @click.option('--batch', 'max_batch_size',  help='Maximum batch size', metavar='INT',                       type=click.IntRange(min=1), default=32, show_default=True)
+@click.option('--sampler',                  help='Sampler family', metavar='STR',                           type=click.Choice(generate_images.SAMPLER_CHOICES), default='edm', show_default=True)
+@click.option('--steps', 'num_steps',       help='Number of sampling steps', metavar='INT',                 type=click.IntRange(min=1), default=32, show_default=True)
+@click.option('--t_mid', 't_mid',           help='Intermediate t for 2-step sCM sampler', metavar='FLOAT',  type=click.FloatRange(min=0, min_open=True), default=1.1, show_default=True)
+@click.option('--order',                    help='Order for trigflow sampler', metavar='INT',               type=click.IntRange(min=1, max=2), default=2, show_default=True)
+@click.option('--sigma_data',               help='Data std (TrigFlow samplers)', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True), default=0.5, show_default=True)
+@click.option('--sigma_min',                help='Lowest noise level', metavar='FLOAT',                     type=click.FloatRange(min=0, min_open=True), default=0.002, show_default=True)
+@click.option('--sigma_max',                help='Highest noise level', metavar='FLOAT',                    type=click.FloatRange(min=0, min_open=True), default=80.0, show_default=True)
+@click.option('--rho',                      help='Time step exponent', metavar='FLOAT',                     type=click.FloatRange(min=0, min_open=True), default=7.0, show_default=True)
+@click.option('--boundary-schedule', 'boundary_schedule', help='MS-sCD segment boundary schedule', metavar='STR', type=click.Choice(['uniform_t', 'uniform_log_snr']), default='uniform_t', show_default=True)
+@click.option('--step-sigmas', 'step_sigmas', help='Explicit sigma grid for euler, e.g. 80,1.1,0', metavar='LIST', type=str, default=None)
+@click.option('--class', 'class_idx',       help='Class label  [default: random]', metavar='INT',           type=click.IntRange(min=0), default=None)
 
-def gen(net, ref_path, metrics, num_images, seed, **opts):
-    """Calculate metrics for a given model using default sampler settings."""
+def gen(net, ref_path, metrics, num_images, seed, sampler, **opts):
+    """Calculate metrics for a given model using the given sampler.
+
+    \b
+    # sCD / sCT student, 2-step sCM sampler
+    torchrun --standalone --nproc_per_node=8 calculate_metrics.py gen \\
+        --net=student.pkl --ref=ref.pkl --sampler=scm --steps=2
+
+    \b
+    # MS-sCD student, M=8 segments
+    torchrun --standalone --nproc_per_node=8 calculate_metrics.py gen \\
+        --net=student.pkl --ref=ref.pkl --sampler=ms_scd --steps=8
+    """
     dist.init()
     if dist.get_rank() == 0:
         ref = load_stats(path=ref_path) # do this first, just in case it fails
-    image_iter = generate_images.generate_images(net=net, seeds=range(seed, seed + num_images), **opts)
+    sampler_fn = generate_images.resolve_sampler(sampler, opts)
+    image_iter = generate_images.generate_images(
+        net=net, seeds=range(seed, seed + num_images), sampler_fn=sampler_fn, **opts)
     stats_iter = calculate_stats_for_iterable(image_iter, metrics=metrics)
     for r in tqdm.tqdm(stats_iter, unit='batch', disable=(dist.get_rank() != 0)):
         pass

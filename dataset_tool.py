@@ -4,6 +4,8 @@
 # Attribution-NonCommercial-ShareAlike 4.0 International License.
 # You should have received a copy of the license along with this
 # work. If not, see http://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# Modified: CIFAR-10 tarball input, from NVlabs/edm.
 
 """Tool for creating ZIP/PNG based datasets."""
 
@@ -13,7 +15,9 @@ import functools
 import io
 import json
 import os
+import pickle
 import re
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Union
@@ -128,6 +132,38 @@ def open_image_zip(source, *, max_images: Optional[int]) -> tuple[int, Iterator[
 
 #----------------------------------------------------------------------------
 
+def open_cifar10(tarball: str, *, max_images: Optional[int]) -> tuple[int, Iterator[ImageEntry]]:
+    images = []
+    labels = []
+
+    with tarfile.open(tarball, 'r:gz') as tar:
+        for batch in range(1, 6):
+            member = tar.getmember(f'cifar-10-batches-py/data_batch_{batch}')
+            with tar.extractfile(member) as file:
+                data = pickle.load(file, encoding='latin1')
+            images.append(data['data'].reshape(-1, 3, 32, 32))
+            labels.append(data['labels'])
+
+    images = np.concatenate(images)
+    labels = np.concatenate(labels)
+    images = images.transpose([0, 2, 3, 1]) # NCHW -> NHWC
+    assert images.shape == (50000, 32, 32, 3) and images.dtype == np.uint8
+    assert labels.shape == (50000,) and labels.dtype in [np.int32, np.int64]
+    assert np.min(images) == 0 and np.max(images) == 255
+    assert np.min(labels) == 0 and np.max(labels) == 9
+
+    max_idx = maybe_min(len(images), max_images)
+
+    def iterate_images():
+        for idx, img in enumerate(images):
+            yield ImageEntry(img=img, label=int(labels[idx]))
+            if idx >= max_idx - 1:
+                break
+
+    return max_idx, iterate_images()
+
+#----------------------------------------------------------------------------
+
 def make_transform(
     transform: Optional[str],
     output_width: Optional[int],
@@ -210,10 +246,12 @@ def open_dataset(source, *, max_images: Optional[int]):
     if os.path.isdir(source):
         return open_image_folder(source, max_images=max_images)
     elif os.path.isfile(source):
-        if file_ext(source) == 'zip':
+        if os.path.basename(source) == 'cifar-10-python.tar.gz':
+            return open_cifar10(source, max_images=max_images)
+        elif file_ext(source) == 'zip':
             return open_image_zip(source, max_images=max_images)
         else:
-            raise click.ClickException(f'Only zip archives are supported: {source}')
+            raise click.ClickException(f'Only zip archives and cifar-10-python.tar.gz are supported: {source}')
     else:
         raise click.ClickException(f'Missing input file or directory: {source}')
 

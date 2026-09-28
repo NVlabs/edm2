@@ -23,6 +23,12 @@ warnings.filterwarnings('ignore', '`resume_download` is deprecated')
 warnings.filterwarnings('ignore', 'You are using `torch.load` with `weights_only=False`')
 warnings.filterwarnings('ignore', '1Torch was not compiled with flash attention')
 
+# Modules referenced by distilled network pickles.
+import training.networks_edm
+import training.networks_edm2
+import training.distillation.consistency.loss_cd
+import training.distillation.moment_matching.loss_mm
+
 #----------------------------------------------------------------------------
 # Configuration presets.
 
@@ -114,6 +120,238 @@ def edm_sampler(
             d_prime = (x_next - denoise(x_next, t_next)) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
+    return x_next
+
+#----------------------------------------------------------------------------
+# TrigFlow sampler from the paper "Simplifying, Stabilizing and Scaling
+# Continuous-Time Consistency Models" (Lu & Song, 2025). order=1 is DDIM,
+# order=2 is single-step DPM-Solver-2S with r = 1. The corrector is skipped
+# on the last step, so NFE = 2 * num_steps - 1.
+
+def trigflow_sampler(
+    net, noise, labels=None, gnet=None,
+    num_steps=32, sigma_min=0.002, sigma_max=80, rho=7, guidance=1,
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
+    sigma_data=0.5, order=2,
+    dtype=torch.float32, randn_like=torch.randn_like,
+):
+    del randn_like, S_churn, S_min, S_max, S_noise
+
+    def flow_and_eps(x, t_scalar):
+        # Returns sigma_d * F and eps = sin(t) * x + cos(t) * sigma_d * F.
+        t = torch.full([x.shape[0]], t_scalar, device=x.device, dtype=dtype)
+        _, F = net(x, t, labels, return_F=True)
+        F = F.to(dtype)
+        if guidance != 1:
+            _, ref_F = gnet(x, t, labels, return_F=True)
+            ref_F = ref_F.to(dtype)
+            F = ref_F.lerp(F, guidance)
+        sigma_dF = sigma_data * F
+        sin_t = torch.sin(t_scalar)
+        cos_t = torch.cos(t_scalar)
+        eps = sin_t * x + cos_t * sigma_dF
+        return sigma_dF, eps
+
+    # Karras sigma schedule, mapped to t = arctan(sigma / sigma_data).
+    step_indices = torch.arange(num_steps, dtype=dtype, device=noise.device)
+    sigma_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+    sigma_steps = torch.cat([sigma_steps, torch.zeros_like(sigma_steps[:1])]) # sigma_N = 0
+    t_steps = torch.atan(sigma_steps / sigma_data)
+
+    # Same starting point as EDM, mapped by x_t = cos(t) * x_sigma.
+    x = noise.to(dtype) * sigma_steps[0] * torch.cos(t_steps[0])
+    for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
+        delta = t_cur - t_next
+        sigma_dF_cur, eps_cur = flow_and_eps(x, t_cur)
+
+        # DDIM step.
+        x_pred = torch.cos(delta) * x - torch.sin(delta) * sigma_dF_cur
+
+        # DPM-Solver-2S correction, skipped on the last step.
+        if order >= 2 and i < num_steps - 1:
+            _, eps_next = flow_and_eps(x_pred, t_next)
+            x = x_pred - (torch.sin(delta) / (2 * torch.cos(t_cur))) * (eps_next - eps_cur)
+        else:
+            x = x_pred
+
+    return x
+
+#----------------------------------------------------------------------------
+# EDM Heun sampler on a TrigFlow network, as a cross-check for trigflow_sampler.
+# D(x_sigma, sigma) = cos(t) * x_t - sin(t) * sigma_d * F(x_t / sigma_d, t),
+# with t = arctan(sigma / sigma_data) and x_t = cos(t) * x_sigma.
+
+class _TrigFlowEDMDenoiser:
+    """Adapts a TrigFlow precond to the EDM denoiser interface D(x, sigma, labels)."""
+
+    def __init__(self, net, sigma_data, dtype=torch.float32):
+        self.net = net
+        self.sigma_data = float(sigma_data)
+        self.dtype = dtype
+        self.img_channels = net.img_channels
+        self.img_resolution = net.img_resolution
+        self.label_dim = int(getattr(net, 'label_dim', 0))
+
+    def __call__(self, x_sigma, sigma, labels=None):
+        sigma = torch.as_tensor(sigma, device=x_sigma.device, dtype=self.dtype)
+        if sigma.ndim == 0:
+            sigma = sigma.expand(x_sigma.shape[0])
+        sigma_b = sigma.reshape(-1, 1, 1, 1)
+        t_b = torch.atan(sigma_b / self.sigma_data)
+        x_t = torch.cos(t_b) * x_sigma
+        _, F = self.net(x_t, t_b.flatten(), labels, return_F=True)
+        F = F.to(self.dtype)
+        return torch.cos(t_b) * x_t - torch.sin(t_b) * self.sigma_data * F
+
+
+def trigflow_edm_heun_sampler(
+    net, noise, labels=None, gnet=None,
+    num_steps=18, sigma_min=0.002, sigma_max=80, rho=7, guidance=1,
+    sigma_data=0.5, dtype=torch.float32, randn_like=torch.randn_like,
+    **kwargs,
+):
+    del kwargs
+    denoiser = _TrigFlowEDMDenoiser(net, sigma_data, dtype)
+    gdenoiser = _TrigFlowEDMDenoiser(gnet, sigma_data, dtype) if gnet is not None else None
+    return edm_sampler(
+        denoiser, noise, labels=labels, gnet=gdenoiser,
+        num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max, rho=rho,
+        guidance=guidance, S_churn=0, dtype=dtype, randn_like=randn_like,
+    )
+
+#----------------------------------------------------------------------------
+# sCM sampler. Extra steps restart from the fixed time t_mid.
+
+def scm_sampler(
+    net, noise, labels=None, gnet=None,
+    num_steps=1, t_mid=1.1,
+    sigma_max=80, sigma_data=0.5,
+    dtype=torch.float32, randn_like=torch.randn_like, **kwargs,
+):
+    del gnet, kwargs
+    device = noise.device
+    t_max = torch.atan(torch.tensor(float(sigma_max) / float(sigma_data), device=device, dtype=dtype))
+
+    def consistency_fn(x, t):
+        # f(x_t, t) = cos(t) * x_t - sin(t) * sigma_d * F.
+        t_b = torch.full([x.shape[0]], float(t), device=device, dtype=dtype)
+        _, F = net(x, t_b, labels, return_F=True)
+        F = F.to(dtype)
+        t_t = torch.tensor(float(t), device=device, dtype=dtype)
+        return torch.cos(t_t) * x - torch.sin(t_t) * sigma_data * F
+
+    x = noise.to(dtype) * float(sigma_max) * torch.cos(t_max)
+    x0 = consistency_fn(x, float(t_max.item()))
+    if int(num_steps) <= 1:
+        return x0
+    # Re-noise to t_mid with fresh noise; a deterministic re-projection cannot improve x0.
+    for _ in range(int(num_steps) - 1):
+        z = randn_like(x0)
+        t_t = torch.tensor(float(t_mid), device=device, dtype=dtype)
+        x_t = torch.cos(t_t) * x0 + torch.sin(t_t) * float(sigma_data) * z
+        x0 = consistency_fn(x_t, float(t_mid))
+    return x0
+
+#----------------------------------------------------------------------------
+# MS-sCD sampler: one step per segment, from t_{k+1} to t_k, with the network
+# conditioned on both. M = num_segments, or num_steps if not given.
+
+def ms_scd_sampler(
+    net, noise, labels=None, gnet=None,
+    num_steps=8, num_segments=None,
+    boundary_schedule='uniform_t',
+    sigma_max=80, sigma_data=0.5,
+    dtype=torch.float32, randn_like=torch.randn_like, **kwargs,
+):
+    del randn_like, gnet, kwargs
+    from training.segment_schedule import build_boundaries, t_max_from_sigma
+
+    M = int(num_segments) if num_segments is not None else int(num_steps)
+    device = noise.device
+    t_max = t_max_from_sigma(sigma_max, sigma_data)
+    boundaries = build_boundaries(M, t_max, schedule=boundary_schedule, device=device, dtype=dtype)
+
+    x = noise.to(dtype) * float(sigma_max) * torch.cos(torch.tensor(t_max, device=device, dtype=dtype))
+    for k in range(M - 1, -1, -1):
+        t_from = float(boundaries[k + 1].item())
+        t_to = float(boundaries[k].item())
+        delta = t_from - t_to
+        t_from_b = torch.full([x.shape[0]], t_from, device=device, dtype=dtype)
+        t_k_b = torch.full([x.shape[0]], t_to, device=device, dtype=dtype)
+        _, F = net(x, t_from_b, labels, t_k=t_k_b, return_F=True)
+        F = F.to(dtype)
+        d = torch.tensor(delta, device=device, dtype=dtype)
+        x = torch.cos(d) * x - torch.sin(d) * sigma_data * F
+    return x
+
+#----------------------------------------------------------------------------
+# Euler sampler for MSCD students (NFE = num_steps).
+
+def euler_sampler(
+    net, noise, labels=None, gnet=None,
+    num_steps=8, sigma_min=0.002, sigma_max=80, rho=7, guidance=1,
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
+    dtype=torch.float32, randn_like=torch.randn_like,
+    step_sigmas=None, **kwargs,
+):
+    def denoise(x, t):
+        Dx = net(x, t, labels).to(dtype)
+        if guidance == 1:
+            return Dx
+        ref_Dx = gnet(x, t, labels).to(dtype)
+        return ref_Dx.lerp(Dx, guidance)
+
+    if step_sigmas is not None:
+        t_steps = torch.as_tensor(step_sigmas, dtype=dtype, device=noise.device)
+    else:
+        step_indices = torch.arange(num_steps, dtype=dtype, device=noise.device)
+        t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+        t_steps = torch.cat([t_steps, torch.zeros_like(t_steps[:1])])
+    x_next = noise.to(dtype) * t_steps[0]
+    for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
+        x_cur = x_next
+        if S_churn > 0 and S_min <= t_cur <= S_max:
+            gamma = min(S_churn / num_steps, np.sqrt(2) - 1)
+            t_hat = t_cur + gamma * t_cur
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+        else:
+            t_hat = t_cur
+            x_hat = x_cur
+        d_cur = (x_hat - denoise(x_hat, t_hat)) / t_hat
+        x_next = x_hat + (t_next - t_hat) * d_cur
+    return x_next
+
+#----------------------------------------------------------------------------
+# Ancestral sampler for moment-matching students (Salimans et al., 2024).
+
+def ancestral_sampler(
+    net, noise, labels=None, gnet=None, randn_like=torch.randn_like,
+    num_steps=8, sigma_min=0.002, sigma_max=80, rho=7, **kwargs,
+):
+    from training.distillation.moment_matching.momentmatching_ops import (
+        time_to_sigma, sample_conditional_posterior,
+    )
+    sigma_min = max(sigma_min, float(getattr(net, 'sigma_min', sigma_min)))
+    sigma_max = min(sigma_max, float(getattr(net, 'sigma_max', sigma_max)))
+
+    step_indices = torch.arange(num_steps + 1, dtype=torch.float64, device=noise.device)
+    t_grid = step_indices / num_steps                       # [0, 1/k, ..., 1]
+    sigma_grid = time_to_sigma(t_grid, sigma_min, sigma_max, rho)
+    sigma_grid = sigma_grid.flip(0)                          # [sigma_max, ..., sigma_min]
+    if hasattr(net, 'round_sigma'):
+        sigma_grid = net.round_sigma(sigma_grid)
+
+    x_next = noise.to(torch.float64) * sigma_grid[0]
+    for i in range(num_steps):
+        sig_t = sigma_grid[i]
+        sig_s = sigma_grid[i + 1]
+        x_hat = net(x_next, sig_t, labels).to(torch.float64)
+        if i == num_steps - 1:
+            x_next = x_hat
+        else:
+            sig_t_batch = sig_t.expand(x_next.shape[0])
+            sig_s_batch = sig_s.expand(x_next.shape[0])
+            x_next = sample_conditional_posterior(x_next, x_hat, sig_t_batch, sig_s_batch, randn_like=randn_like)
     return x_next
 
 #----------------------------------------------------------------------------
@@ -241,6 +479,46 @@ def generate_images(
     return ImageIterable()
 
 #----------------------------------------------------------------------------
+# Samplers selectable with --sampler, also used by calculate_metrics.py.
+
+SAMPLER_REGISTRY = {
+    'edm': edm_sampler,
+    'trigflow': trigflow_sampler,
+    'scm': scm_sampler,
+    'euler': euler_sampler,
+    'ancestral': ancestral_sampler,
+    'ms_scd': ms_scd_sampler,
+}
+
+SAMPLER_CHOICES = list(SAMPLER_REGISTRY.keys())
+
+def resolve_sampler(sampler_name, opts):
+    """Return the sampler and drop the options in opts that it does not take."""
+    if sampler_name not in SAMPLER_REGISTRY:
+        raise click.ClickException(f'Invalid sampler "{sampler_name}"')
+    sampler_fn = SAMPLER_REGISTRY[sampler_name]
+    if sampler_name in ('edm', 'euler', 'ancestral'):
+        opts.pop('order', None)
+        opts.pop('sigma_data', None)
+    if sampler_name != 'ms_scd':
+        opts.pop('boundary_schedule', None)
+    if sampler_name != 'scm':
+        opts.pop('t_mid', None)
+    if sampler_name != 'euler':
+        opts.pop('step_sigmas', None)
+    elif opts.get('step_sigmas', None) is not None:
+        opts['step_sigmas'] = parse_float_list(opts['step_sigmas'])
+    return sampler_fn
+
+def parse_float_list(s):
+    """Parse a comma-separated list of floats, e.g. '80,1.1,0'."""
+    if s is None or (isinstance(s, str) and s.strip() == ''):
+        return None
+    if isinstance(s, (list, tuple)):
+        return [float(x) for x in s]
+    return [float(x) for x in s.split(',')]
+
+#----------------------------------------------------------------------------
 # Parse a comma separated list of numbers or ranges and return a list of ints.
 # Example: '1,2,5-10' returns [1, 2, 5, 6, 7, 8, 9, 10]
 
@@ -271,6 +549,12 @@ def parse_int_list(s):
 @click.option('--batch', 'max_batch_size',  help='Maximum batch size', metavar='INT',                               type=click.IntRange(min=1), default=32, show_default=True)
 
 @click.option('--steps', 'num_steps',       help='Number of sampling steps', metavar='INT',                         type=click.IntRange(min=1), default=32, show_default=True)
+@click.option('--sampler',                  help='Sampler family', metavar='edm|trigflow|scm|euler|ancestral|ms_scd',   type=click.Choice(SAMPLER_CHOICES), default='edm', show_default=True)
+@click.option('--boundary-schedule', 'boundary_schedule', help='MS-sCD segment boundary schedule', metavar='STR',  type=click.Choice(['uniform_t', 'uniform_log_snr']), default='uniform_t', show_default=True)
+@click.option('--order',                    help='Order for trigflow sampler', metavar='INT',                       type=click.IntRange(min=1, max=2), default=2, show_default=True)
+@click.option('--t_mid', 't_mid',           help='Intermediate t for 2-step sCM sampler', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True), default=1.1, show_default=True)
+@click.option('--step-sigmas', 'step_sigmas', help='Explicit sigma grid for euler, e.g. 80,1.1,0', metavar='LIST', type=str, default=None)
+@click.option('--sigma_data',               help='Data std for trigflow sampler', metavar='FLOAT',                  type=click.FloatRange(min=0, min_open=True), default=0.5, show_default=True)
 @click.option('--sigma_min',                help='Lowest noise level', metavar='FLOAT',                             type=click.FloatRange(min=0, min_open=True), default=0.002, show_default=True)
 @click.option('--sigma_max',                help='Highest noise level', metavar='FLOAT',                            type=click.FloatRange(min=0, min_open=True), default=80, show_default=True)
 @click.option('--rho',                      help='Time step exponent', metavar='FLOAT',                             type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
@@ -312,6 +596,9 @@ def cmdline(preset, **opts):
         opts.gnet = None
     elif opts.gnet is None:
         raise click.ClickException('Please specify --gnet when using guidance')
+
+    sampler_name = opts.pop('sampler')
+    opts.sampler_fn = resolve_sampler(sampler_name, opts)
 
     # Generate.
     dist.init()
